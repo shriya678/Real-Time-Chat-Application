@@ -714,7 +714,127 @@ Trade-off: a ~24 px sliver of always-reserved space. Barely noticeable when empt
 
 ---
 
-## 12. Sections Reserved for Later Features
+## 12. Online Presence *(Feature 9)*
+
+### Event model
+
+Three socket events power the roster:
+
+| Direction | Event | Payload | Semantics |
+|---|---|---|---|
+| client → server | `presence:join` | `{ username }` | "I'm here" — announce yourself |
+| server → joiner | `presence:list` | `{ users }` | Full current roster (unicast response to the announcer) |
+| server → all *except sender* | `presence:join` | `{ username }` | Broadcast: someone new came online |
+| server → all *except sender* | `presence:leave` | `{ username }` | Broadcast: someone went offline (last tab closed) |
+
+Unlike typing (§11), presence needs **server-side state** — a fresh joiner has to see who is ALREADY online, not just future join/leave events. Server holds the authoritative roster.
+
+### Server design — `presenceHandler.js`
+
+Module-level `Map<socketId, username>` — one entry per active socket. Multi-tab handling falls out of this naturally:
+
+- **Join broadcast** fires only when `countSocketsFor(username) === 0` before the insert (i.e., the user's FIRST socket connects). Opening a second tab doesn't spam other clients with a duplicate join.
+- **Leave broadcast** fires only when `countSocketsFor(username) === 0` after the delete (i.e., the user's LAST socket closes). Closing one tab of two doesn't broadcast a leave.
+- **`presence:list` unicast** goes to the joiner only via `socket.emit`. Other clients already have accurate rosters from historical join events.
+
+`socket.data.presenceUsername` stashes the username per socket so the disconnect handler knows who to `leave` on behalf of — same pattern as `socket.data.typingAs` from F8.
+
+**Single-process only.** The Map is module state, not distributed. Multi-instance backends would need `@socket.io/redis-adapter` to sync rosters across processes. Documented as future improvement.
+
+### Client design — `usePresence` hook
+
+Announces on `'connect'`, listens for the three server events, exposes `onlineUsers: string[]`.
+
+**Announce timing:**
+- If socket is already connected when the hook mounts, emit `presence:join` immediately
+- Otherwise, wait for the `'connect'` event to fire
+- The same handler fires again on Socket.io's automatic reconnect — a network blip re-announces us to the server
+
+**State updates:**
+- `presence:list` **replaces** the local list (server is source of truth)
+- `presence:join` **adds** the joiner (dedupe on insert)
+- `presence:leave` **removes** the leaver
+- `disconnect` **clears** the list (fresh state on reconnect via new `presence:list`)
+
+Same shape as `useTyping` — consumers pattern-match.
+
+### Disconnect-on-logout — the full flow
+
+Presence would be badly stale if a logged-out user stayed on the login screen (browser tab still open, socket still connected → server still shows them online). We close the socket on logout so the server sees a clean departure.
+
+Chain of events on Logout click:
+
+```
+AuthContext.logout()
+   ↓
+isAuthenticated flips false
+   ↓
+App re-renders → returns <LoginScreen /> instead of <AuthenticatedApp />
+   ↓
+AuthenticatedApp + ChatProvider + hooks unmount
+   → useEffect cleanups remove socket listeners
+   ↓
+App's useEffect keyed on isAuthenticated fires with false
+   → calls disconnectSocket()
+   ↓
+socket.disconnect() → server sees 'disconnect'
+   ↓
+Server-side chatHandler.disconnect: broadcasts typing:stop if socket was typing
+Server-side presenceHandler.disconnect: broadcasts presence:leave (last socket)
+   ↓
+Other clients: remove user from their rosters, remove from typers set
+```
+
+On re-login (same or different username):
+- `AuthenticatedApp` mounts again → hooks re-attach listeners
+- `getSocket()` returns the disconnected singleton but detects `!socket.connected` and calls `.connect()` — reuses the same instance, no leak
+- `usePresence` waits for `'connect'` then emits `presence:join` with the new username
+- Server registers, broadcasts join, replies with the fresh `presence:list`
+
+### Socket singleton — auto-reconnect refinement
+
+`getSocket()` gained a small guard:
+
+```js
+if (socket) {
+  if (!socket.connected) socket.connect();
+  return socket;
+}
+```
+
+Rationale: after explicit `.disconnect()`, Socket.io keeps the instance alive but does NOT auto-reconnect (auto-reconnect only handles UNEXPECTED disconnects). Without this guard, `getSocket()` after logout+login would hand back a dead socket. The two-line check makes the singleton lifecycle robust across login/logout cycles.
+
+*Alternative rejected:* resetting the singleton to `null` on disconnect and creating a fresh instance next time. Would leak the previous instance's listener registrations if anything held a reference; the connect-if-disconnected path preserves identity and is simpler.
+
+### `OnlineUsers` sidebar — UI design
+
+- **Semantic `<aside>` with `aria-label="Online users"`.** Screen readers announce it as a landmark region.
+- **Sort:** current user first, then alphabetical. You always know where you are.
+- **Two identity signals for self** — highlighted background AND a `you` tag. Same accessibility discipline as own-vs-others message bubbles (F6) — don't rely on color alone.
+- **Green online-dot per user** with a subtle glow — a scannable visual affordance beyond the text.
+- **Fixed sidebar width 240 px**, `flex-shrink: 0`. Wide enough for realistic usernames; not so wide it dominates the chat.
+- **Media query hides the sidebar under 700 px viewport width** — narrow screens give the whole width to the chat. Not a full mobile experience, but doesn't break there.
+
+### Layout — `.chat-layout` flex row
+
+New wrapper inside `shell-body` composes ChatWindow (left, flex-grow) + OnlineUsers (right, fixed width) as a horizontal pair, capped at `max-width: 1200 px` and centered. Only the "loaded" branch of the ternary uses this container — loading and error states remain centered as before.
+
+`ChatWindow` released its own `max-width: 900 px` and gained `flex: 1; min-width: 0` so it flexes inside the layout. `min-width: 0` is the flex-shrink trick that lets the message list actually clip content instead of pushing the sidebar off-screen.
+
+### Trade-offs and future improvements
+
+| Now (F9) | Future |
+|---|---|
+| In-memory `Map<socketId, username>` (single-process) | `@socket.io/redis-adapter` to sync rosters across horizontally-scaled backends |
+| Username in every `presence:join` payload | Auth handshake sets `socket.data.username` at connect; presence infers it |
+| No "last seen" for offline users | Persist last-seen timestamps to Mongo; show "offline for 5m" |
+| No idle detection | Detect no-input-for-N-minutes and broadcast a `presence:idle` state |
+| Sidebar hidden under 700 px | Full mobile experience with sidebar-as-drawer |
+| No sorting beyond self-first / alphabetical | Group by "typing", "active", "idle"; or by recently-active |
+
+---
+
+## 13. Sections Reserved for Later Features
 
 - **Read receipt update patterns** *(Feature 10)* — the Message schema and pagination live in §6; only the receipt-write flow remains
 - **Deployment topology — Render + Vercel + Atlas** *(Feature 11)*
