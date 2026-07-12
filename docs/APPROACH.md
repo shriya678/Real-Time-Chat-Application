@@ -188,10 +188,113 @@ Rolled a minimal `validateBody(schema)` middleware factory instead of adopting z
 
 ---
 
-## 7. Sections Reserved for Later Features
+## 7. Socket.io Architecture *(Feature 4)*
+
+### Connection lifecycle
+
+```
+Client connects (HTTP upgrade → WebSocket)
+   ↓
+Socket.io CORS check (env.CORS_ORIGIN)
+   ↓
+Server logs 'socket connected' with socket.id
+   ↓
+Register per-domain handlers on this socket:
+   • registerChatHandlers(io, socket)     → F4
+   • registerPresenceHandlers(io, socket) → F9
+   ↓
+Handlers process events until:
+   ↓
+Client disconnects (transport close or explicit disconnect)
+   ↓
+Server logs 'socket disconnected' with reason
+```
+
+Disconnect mid-event is safe — Socket.io propagates the disconnect through the same emitter chain, and Node's event model tolerates handlers on a closed socket.
+
+### Event catalog (Feature 4 scope)
+
+| Direction | Event | Payload | Purpose |
+|---|---|---|---|
+| client → server | `message:send` | `{ username, content }` (+ optional ack callback) | Send a new message |
+| server → all | `message:new` | Full message object (same shape as REST response) | Broadcast newly persisted message |
+| server → sender | `message:error` | `{ code, message, details? }` | Validation or persistence failure |
+| server → sender (ack) | *(no event name — via callback)* | `{ success: true, data }` or `{ success: false, error }` | Direct response to the sender's specific emit |
+
+Feature 8 will add `typing:*`, Feature 9 adds `presence:*`, Feature 10 adds `message:ack`, `message:read`, `message:read-update`.
+
+### Handler pipeline
+
+The chat handler mirrors the REST pipeline — validate → service → respond:
+
+```
+message:send  →  validate(MESSAGE_BODY_SCHEMA, payload)
+                       ↓  (valid)
+                 messageService.createMessage(sanitized)
+                       ↓
+                 io.emit('message:new', message)         (broadcast to all)
+                 ack({ success: true, data: message })   (respond to sender)
+
+                       ↓  (invalid or persist failure)
+                 socket.emit('message:error', payload)
+                 ack({ success: false, error: payload })
+```
+
+Response envelope is identical to REST — `{ success, data | error }` — so a single client-side helper parses either channel.
+
+### Broadcast strategy — `io.emit` vs rooms
+
+Currently `io.emit(...)` sends to every connected socket. Simplest model for a single global lobby.
+
+Path to multi-room support (documented but not built):
+1. Clients emit `room:join { roomId }` on entry
+2. Server does `socket.join(roomId)`
+3. Replace `io.emit(NEW, msg)` with `io.to(roomId).emit(NEW, msg)`
+
+Handler shape stays identical — only the emit target changes.
+
+### Validation reuse across transports
+
+The pure `validate(schema, data)` function in `middleware/validate.js` is called from:
+- `validateBody(schema)` — Express middleware wrapper for REST routes
+- `chatHandler.registerChatHandlers` — directly in the socket handler
+
+Both consume `MESSAGE_BODY_SCHEMA` from `models/Message.js`, so the two transports cannot drift on what a valid message body looks like. This was the small refactor bundled into F4.2 — one schema, one validator, two transports.
+
+### Ack callback pattern
+
+Socket.io supports "acknowledgements" — the client passes a callback as the last argument to `emit`, and the server invokes it. Semantically equivalent to a request/response, but stays on the same socket connection with no extra round-trip.
+
+We fire **both** the ack AND the `message:error` event on failure:
+- Some clients wait for the ack (per-request response pattern)
+- Some clients listen for a global `message:error` handler (broadcast-style)
+- Firing both means either pattern works
+
+### Graceful shutdown ordering
+
+`server.js` shuts down in this order on SIGINT/SIGTERM:
+1. `io.close()` — refuse new upgrades, close existing sockets
+2. `httpServer.close()` — finish any in-flight REST requests
+3. `disconnectDB()` — Mongo connection down
+4. `process.exit(0)`
+
+A 10-second `setTimeout(...).unref()` force-exits if any step hangs. The `.unref()` prevents the timer from keeping the event loop alive on a normal (fast) shutdown.
+
+### Trade-offs and future improvements
+
+| Now (F4) | Future |
+|---|---|
+| `io.emit` — everyone gets everything | Room-scoped `io.to(roomId).emit` for multi-room chat |
+| Username sent in every payload | Auth handshake sets `socket.data.username`; handlers validate sender identity |
+| No message deduplication on client tempIds | F10 introduces `tempId` + `message:ack` correlation |
+| Single-process socket layer | `@socket.io/redis-adapter` for horizontally-scaled backends |
+| No rate limiting on socket events | `socket.use((packet, next) => …)` middleware with per-user token bucket |
+
+---
+
+## 8. Sections Reserved for Later Features
 
 - **State management strategy** *(Feature 5–7)*
-- **Socket.io architecture — event catalog, room usage, connection lifecycle** *(Feature 4, 7–10)*
 - **Read receipt update patterns** *(Feature 10)* — the Message schema and pagination live in §6; only the receipt-write flow remains
 - **Reconnection UX** *(Feature 7)*
 - **Deployment topology — Render + Vercel + Atlas** *(Feature 11)*
