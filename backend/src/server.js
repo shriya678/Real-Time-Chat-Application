@@ -1,13 +1,37 @@
-import 'dotenv/config';
-import express from 'express';
+import { createApp } from './app.js';
+import { connectDB, disconnectDB } from './config/db.js';
+import { env } from './config/env.js';
+import { logger } from './utils/logger.js';
 
-const app = express();
-const PORT = process.env.PORT || 5000;
+const SHUTDOWN_TIMEOUT_MS = 10_000;
 
-app.get('/health', (req, res) => {
-  res.json({ status: 'ok', uptime: process.uptime() });
-});
+async function bootstrap() {
+  await connectDB();
 
-app.listen(PORT, () => {
-  console.log(`[server] listening on http://localhost:${PORT}`);
+  const app = createApp();
+  const server = app.listen(env.PORT, () => {
+    logger.info(`server listening on http://localhost:${env.PORT}`);
+  });
+
+  const shutdown = (signal) => {
+    logger.info(`received ${signal}, shutting down`);
+    server.close(async () => {
+      await disconnectDB();
+      logger.info('shutdown complete');
+      process.exit(0);
+    });
+
+    setTimeout(() => {
+      logger.error('forced shutdown after timeout');
+      process.exit(1);
+    }, SHUTDOWN_TIMEOUT_MS).unref();
+  };
+
+  process.on('SIGINT', () => shutdown('SIGINT'));
+  process.on('SIGTERM', () => shutdown('SIGTERM'));
+}
+
+bootstrap().catch((err) => {
+  console.error('[fatal] bootstrap failed', err);
+  process.exit(1);
 });
