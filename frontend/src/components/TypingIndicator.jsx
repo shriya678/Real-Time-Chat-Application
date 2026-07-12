@@ -7,16 +7,22 @@ function formatTypersText(typers) {
 }
 
 export function TypingIndicator({ typers }) {
-  if (typers.length === 0) return null;
+  const hasTypers = typers.length > 0;
 
+  // Always render the container so its min-height reserves the space,
+  // preventing layout jitter when typing state flips.
   return (
     <div className="typing-indicator" role="status" aria-live="polite">
-      <span className="typing-dots" aria-hidden="true">
-        <span className="typing-dot" />
-        <span className="typing-dot" />
-        <span className="typing-dot" />
-      </span>
-      <span className="typing-text">{formatTypersText(typers)}</span>
+      {hasTypers && (
+        <>
+          <span className="typing-dots" aria-hidden="true">
+            <span className="typing-dot" />
+            <span className="typing-dot" />
+            <span className="typing-dot" />
+          </span>
+          <span className="typing-text">{formatTypersText(typers)}</span>
+        </>
+      )}
     </div>
   );
 }

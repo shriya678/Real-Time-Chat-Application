@@ -2,16 +2,26 @@ import { useState } from 'react';
 
 const MAX_CONTENT_LENGTH = 1000;
 
-export function MessageInput({ onSend, disabled = false }) {
+export function MessageInput({ onSend, onType, onStopTyping, disabled = false }) {
   const [content, setContent] = useState('');
 
   const trimmed = content.trim();
   const canSend = trimmed.length > 0 && !disabled;
 
+  const handleChange = (event) => {
+    setContent(event.target.value);
+    if (!disabled && onType) onType();
+  };
+
+  const handleBlur = () => {
+    if (onStopTyping) onStopTyping();
+  };
+
   const submit = () => {
     if (!canSend) return;
     onSend(trimmed);
     setContent('');
+    if (onStopTyping) onStopTyping();
   };
 
   const handleKeyDown = (event) => {
@@ -28,7 +38,8 @@ export function MessageInput({ onSend, disabled = false }) {
         maxLength={MAX_CONTENT_LENGTH}
         placeholder="Message the lobby (Shift+Enter for newline)…"
         value={content}
-        onChange={(event) => setContent(event.target.value)}
+        onChange={handleChange}
+        onBlur={handleBlur}
         onKeyDown={handleKeyDown}
         disabled={disabled}
         className="chat-input-textarea"
