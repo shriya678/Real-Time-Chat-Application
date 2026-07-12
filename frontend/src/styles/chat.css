@@ -89,11 +89,39 @@
   line-height: 1.4;
 }
 
+.msg-meta {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 0.35rem;
+  margin-top: 0.2rem;
+}
+
 .msg-time {
   font-size: 0.7rem;
-  margin-top: 0.2rem;
   opacity: 0.7;
-  text-align: right;
+}
+
+.receipt-icon {
+  width: 14px;
+  height: auto;
+  flex-shrink: 0;
+  opacity: 0.85;
+}
+
+.receipt-icon--pending,
+.receipt-icon--delivered {
+  color: rgba(255, 255, 255, 0.55);
+}
+
+.msg--own .receipt-icon--pending,
+.msg--own .receipt-icon--delivered {
+  color: rgba(255, 255, 255, 0.85);
+}
+
+.receipt-icon--read {
+  color: #4fc3f7;
+  opacity: 1;
 }
 
 /* --- Message input --- */

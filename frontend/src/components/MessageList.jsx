@@ -1,7 +1,7 @@
 import { useEffect, useRef } from 'react';
 import { MessageBubble } from './MessageBubble.jsx';
 
-export function MessageList({ messages, currentUsername }) {
+export function MessageList({ messages, currentUsername, onMarkRead }) {
   const bottomRef = useRef(null);
 
   useEffect(() => {
@@ -24,6 +24,8 @@ export function MessageList({ messages, currentUsername }) {
           key={message.id || message.tempId}
           message={message}
           isOwn={message.username === currentUsername}
+          currentUsername={currentUsername}
+          onMarkRead={onMarkRead}
         />
       ))}
       <div ref={bottomRef} />

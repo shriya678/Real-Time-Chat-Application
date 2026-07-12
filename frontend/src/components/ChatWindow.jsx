@@ -11,11 +11,16 @@ export function ChatWindow({
   typers = [],
   onType,
   onStopTyping,
+  onMarkRead,
 }) {
   return (
     <div className="chat-window">
       <div className="chat-list-area">
-        <MessageList messages={messages} currentUsername={currentUsername} />
+        <MessageList
+          messages={messages}
+          currentUsername={currentUsername}
+          onMarkRead={onMarkRead}
+        />
       </div>
       <TypingIndicator typers={typers} />
       <div className="chat-input-area">

@@ -12,8 +12,14 @@ import { disconnectSocket } from './socket/index.js';
 import './styles/shell.css';
 
 function AuthenticatedApp({ user, onLogout }) {
-  const { messages, sendMessage, isConnected, isLoadingHistory, historyError } =
-    useChat();
+  const {
+    messages,
+    sendMessage,
+    markMessageRead,
+    isConnected,
+    isLoadingHistory,
+    historyError,
+  } = useChat();
   const { typers, handleTyping, handleStopTyping } = useTyping({ username: user });
   const { onlineUsers } = usePresence({ username: user });
 
@@ -52,6 +58,7 @@ function AuthenticatedApp({ user, onLogout }) {
               typers={typers}
               onType={handleTyping}
               onStopTyping={handleStopTyping}
+              onMarkRead={markMessageRead}
             />
             <OnlineUsers users={onlineUsers} currentUsername={user} />
           </div>
