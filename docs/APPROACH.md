@@ -616,7 +616,105 @@ Feature 9 will introduce explicit `disconnectSocket()` on logout so the server s
 
 ---
 
-## 11. Sections Reserved for Later Features
+## 11. Typing Indicator *(Feature 8)*
+
+### Event model
+
+Two new socket events, both **relayed** (not aggregated) by the server:
+
+| Direction | Event | Payload |
+|---|---|---|
+| client → server | `typing:start` | `{ username }` |
+| server → all *except sender* | `typing:start` | `{ username }` |
+| client → server | `typing:stop` | `{ username }` |
+| server → all *except sender* | `typing:stop` | `{ username }` |
+
+Server maintains **no aggregated typing state**. Each client keeps its own "who's typing" set based on the stream of events it receives.
+
+### Server-side design
+
+Three additions to `chatHandler.registerChatHandlers`:
+
+- `typing:start` handler: stores `socket.data.typingAs = username`, then `socket.broadcast.emit('typing:start', { username })`
+- `typing:stop` handler: clears `socket.data.typingAs`, then `socket.broadcast.emit('typing:stop', { username })`
+- Extra `disconnect` listener: if `socket.data.typingAs` is set, broadcast `typing:stop` on the user's behalf — ensures other clients don't show "X is typing" forever if that user's browser crashed
+
+`socket.broadcast.emit` (not `io.emit`) sends to everyone **except** the sender — users don't see themselves listed as typing.
+
+`socket.data` is Socket.io's per-socket state bag, perfect for stashing a small transient value like the current typing username.
+
+Multiple `'disconnect'` listeners coexist without conflict (Node's EventEmitter pattern) — this handler runs alongside the logging listener in `sockets/index.js`.
+
+### Client-side design — `useTyping` hook
+
+Two responsibilities:
+
+1. **Emit** on the current user's keyboard activity
+2. **Listen** for others' events and expose a `typers` array
+
+**Emit rhythm:**
+- **`typing:start` throttled to every 2 s** while actively typing (via a `lastStartEmitRef` timestamp). Keeps receivers' staleness timers refreshed without spamming — a fast typist still emits at most once per 2 s.
+- **`typing:stop` fires after 2 s idle** (debounced `setTimeout` reset on every keystroke) OR immediately on blur / after send via `handleStopTyping()`.
+
+**Listener state:**
+- `typers: string[]` — usernames currently typing (never includes self)
+- Filters `typer === currentUsername` (belt-and-suspenders; server already excludes sender)
+- Dedupes on add
+
+### Three-layer resilience for stale typers
+
+If a user's client crashes mid-typing, others could see "X is typing…" forever without careful handling. Three cascading layers ensure it clears:
+
+1. **Explicit `typing:stop`** — normal path when the user stops or sends
+2. **Server disconnect cleanup** — server broadcasts `typing:stop` when the socket closes (from `socket.data.typingAs`)
+3. **Client staleness timer** — receiver-side, remove any typer we haven't heard `typing:start` from within 5 s (safety net for the rare case both above fail)
+
+Layer 3 is why the sender's `typing:start` is a **throttled keep-alive** (every 2 s) rather than a one-shot event. Receivers' staleness timers reset with each incoming `typing:start`, so continuously typing users stay in the set.
+
+### Own-state reset on socket disconnect
+
+When the client's socket disconnects, `useTyping` resets `isTypingRef`, clears the debounce timer, and empties the `typers` array. On reconnect:
+- Next keystroke starts a fresh typing session (emits `typing:start` immediately)
+- Other users' typing state re-populates as they emit their next `typing:start`
+
+Prevents the "I'm reconnected but the server still thinks I'm typing" desync.
+
+### Multi-typer formatting
+
+| Typers | Rendered text |
+|---|---|
+| 1 | `alice is typing…` |
+| 2 | `alice and bob are typing…` |
+| 3 | `alice, bob, and carol are typing…` |
+| 4+ | `alice, bob, and 2 more are typing…` |
+
+The four-plus corner case is the one amateur implementations get wrong (endless comma-separated list). WhatsApp, Discord, and Slack all fold long lists — we do too.
+
+### Layout jitter prevention
+
+The `TypingIndicator` container **always renders**, even when `typers.length === 0`. Its `min-height: 1.5rem` reserves the space; content only appears when someone is actually typing. Without this, the layout would jitter (list area growing by ~24 px when the indicator disappears, then shrinking again when it reappears).
+
+Trade-off: a ~24 px sliver of always-reserved space. Barely noticeable when empty, buttery-smooth when it flips.
+
+### Container / presentational split (again)
+
+`useTyping` is called in `AuthenticatedApp` (container), not inside `MessageInput` or `ChatWindow`. The typing outputs (`typers`, `handleTyping`, `handleStopTyping`) are passed down as props. Same discipline as `useChat` in F7 — presentational components stay dumb.
+
+`MessageInput` calls `onType()` on every `onChange` and `onStopTyping()` on `onBlur` + immediately after send. It doesn't know or care what those functions do.
+
+### Trade-offs and future improvements
+
+| Now (F8) | Future |
+|---|---|
+| Server relays events; no server-side aggregation | Server-side typing map with authoritative typers list (needed if clients can't be trusted) |
+| No rate limiting on typing events | `socket.use(...)` middleware with a per-user token bucket — prevents malicious flood |
+| Username sent in every payload | Auth handshake sets `socket.data.username` at connect; typing events omit it |
+| Staleness timeout is fixed 5 s | Configurable per deployment; shorter on high-latency networks would feel snappier |
+| Text-only rendering for 4+ typers | Avatar chips for visual density (Slack pattern) |
+
+---
+
+## 12. Sections Reserved for Later Features
 
 - **Read receipt update patterns** *(Feature 10)* — the Message schema and pagination live in §6; only the receipt-write flow remains
 - **Deployment topology — Render + Vercel + Atlas** *(Feature 11)*
