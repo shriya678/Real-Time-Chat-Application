@@ -15,30 +15,23 @@ The order is bottom-up: backend skeleton → REST → sockets → frontend shell
 ## 2. Tech Stack *(stable)*
 
 ### Backend
-| Choice | Why | Rejected alternative |
-|---|---|---|
-| **Node.js 20 (LTS)** | Mature ES module support without flags; required by the assessment. | Node 18: functional but older; Node 22: not yet LTS. |
-| **Express 4** | Minimal, well-known, widest documentation; still the industry default. | Fastify: faster but adds a learning curve reviewers may not follow. Express 5: newer but less battle-tested. |
-| **Socket.io** | Assessment mandates it. Also gives us rooms, ack semantics, automatic reconnection. | Raw WebSocket: too primitive; the assessment explicitly excludes alternatives. |
-| **Mongoose + MongoDB Atlas** | Fast to model, schema validation built-in, hosted free tier. | Sqlite: no cloud persistence on ephemeral Render disks. Postgres: heavier setup without benefit for this data shape. |
-| **helmet, cors, morgan** | Production hygiene: security headers, CORS control, request logs. Cheap to include, expensive to forget. | Rolling own: pointless reinvention. |
-| **Minimal in-house logger** | ~30 lines, level-aware, swappable. Enough for a take-home. | pino / winston: better in production but extra deps + config we don't need yet. |
+| Choice | Why |
+|---|---|
+| **Node.js 20 (LTS)** | Mature ES module support without flags; required by the assessment. |
+| **Express 4** | Minimal, well-known, widest documentation; still the industry default. |
+| **Socket.io** | Assessment mandates it. Also gives us rooms, ack semantics, automatic reconnection. |
+| **Mongoose + MongoDB Atlas** | Fast to model, schema validation built-in, hosted free tier. |
+| **helmet, cors, morgan** | Production hygiene: security headers, CORS control, request logs. Cheap to include, expensive to forget. |
+| **Minimal in-house logger** | ~30 lines, level-aware, swappable. Enough for a take-home. |
 
 ### Frontend
-| Choice | Why | Rejected alternative |
-|---|---|---|
-| **React 18** | My strongest stack; widest interview vocabulary. | Vue / Svelte: no prior hands-on experience → higher risk on a 24-hour clock. |
-| **Vite** | Instant HMR, native ESM, minimal config. | Create React App: deprecated. Next.js: overkill for a client-rendered chat UI. |
-| **axios** | Interceptors, defaults, easy timeout handling. | fetch: fine for one call, cumbersome for a shared client. |
-| **socket.io-client** | Direct pair with the server. | Custom WebSocket wrapper: reinvention. |
-| **Context + custom hooks** | Fits the scope; no Redux boilerplate. | Redux / Zustand: over-engineered for this state graph. |
-
-### Rejected at top level
-| Rejection | Reason |
+| Choice | Why |
 |---|---|
-| React Native | Zero prior exposure on my side; APK build + toolchain would eat 4–6 hours I cannot spare. Web deploy is one command. |
-| TypeScript | Adds ~1h of config and typing friction. JavaScript with disciplined naming keeps interview signal without dragging the schedule. |
-| A test framework | No time budget; documented smoke tests cover the assessment surface. |
+| **React 18** | My strongest stack; widest interview vocabulary. |
+| **Vite** | Instant HMR, native ESM, minimal config. |
+| **axios** | Interceptors, defaults, easy timeout handling. |
+| **socket.io-client** | Direct pair with the server. |
+| **Context + custom hooks** | Fits the scope; no Redux boilerplate. |
 
 ---
 
@@ -834,9 +827,144 @@ New wrapper inside `shell-body` composes ChatWindow (left, flex-grow) + OnlineUs
 
 ---
 
-## 13. Sections Reserved for Later Features
+## 13. Message Receipts *(Feature 10)*
 
-- **Read receipt update patterns** *(Feature 10)* — the Message schema and pagination live in §6; only the receipt-write flow remains
+### Three-state UX
+
+| State | Visual | Meaning |
+|---|---|---|
+| pending | ✓ (gray) | Client optimistically rendered; server hasn't confirmed |
+| delivered | ✓✓ (gray) | Server persisted the message and broadcast it |
+| read | ✓✓ (blue) | At least one OTHER user's client marked it read |
+
+Only OWN messages carry a receipt icon — the sender is who cares about delivery status.
+
+### Group-chat semantic choice — any-read, not all-read
+
+For a global lobby with potentially many recipients, "read by all" (WhatsApp-DM style) becomes ambiguous and heavy. **Any-read = blue** matches the intent ("someone saw it") without requiring per-recipient tracking on the sender's side. Documented trade-off; upgrading to all-read is a one-line change in `computeReceiptState`.
+
+### Event model
+
+| Direction | Event | Payload | Purpose |
+|---|---|---|---|
+| client → server | `message:send` | `{ username, content, tempId? }` | Send. tempId is optional; used for optimistic reconciliation |
+| server → sender | `message:new` | `{ ...persisted message, tempId }` | Sender's echo — carries tempId back for reconciliation |
+| server → all *except sender* | `message:new` | `{ ...persisted message }` | Everyone else's copy — no tempId |
+| server → sender (ack) | *via callback* | `{ success: true, data, tempId }` or `{ success: false, error }` | Fallback for error rollback; success is redundant with the echo above |
+| client → server | `message:read` | `{ messageId, username }` | "I saw this message" |
+| server → all | `message:read-update` | `{ messageId, username, readAt }` | Broadcast readBy delta |
+
+### Server design
+
+**Two-emit pattern for `message:new`.** Sender gets the echo with `tempId`; everyone else gets a clean broadcast without it.
+
+```js
+socket.broadcast.emit('message:new', message);
+socket.emit('message:new', tempId ? { ...message, tempId } : message);
+```
+
+**Atomic `markMessageRead`.** Single `updateOne` with `$push` gated by `$ne`:
+
+```js
+Message.updateOne(
+  { _id: messageId, 'readBy.username': { $ne: username } },
+  { $push: { readBy: { username, readAt: new Date() } } }
+);
+```
+
+`modifiedCount === 0` means the user already read the message — return `null`, no broadcast. Dedupes at the DB level, so even if a client's IntersectionObserver fires twice (React StrictMode double-mount, scroll bounce), only one receipt is inserted.
+
+**`message:read-update` broadcast to `io.emit` (everyone including reader).** Reader's UI doesn't visually change (own read state on others' messages isn't shown), but keeping every client's local `readBy` accurate for that message means refresh-time correctness stays consistent.
+
+**Ack becomes fallback-only.** Since `message:new` to sender carries tempId, the ack callback's role reduces to "fire if the send failed" — client uses `ack.success === false` to rollback the optimistic entry.
+
+### Client design — sending path
+
+```
+sendMessage(content)
+   ↓
+generate tempId
+   ↓
+setMessages(prev => [...prev, { tempId, id: tempId, ..., status: 'pending' }])
+   ↓
+socket.emit('message:send', { username, content, tempId }, ackCallback)
+   ↓
+Server persists → broadcasts to others → echoes to sender with tempId
+   ↓
+handleMessageNew (sender): find prev entry by tempId → replace with server's persisted message
+   ↓
+ackCallback fires with success — no-op (reconciliation already happened)
+
+If ack.success === false: rollback via setMessages(prev.filter(m => m.tempId !== tempId))
+```
+
+### Client design — receiving + read path
+
+```
+handleMessageNew (recipient): append (no tempId, dedupe by id)
+   ↓
+MessageBubble renders (isOwn=false, shouldObserve=true if not already in readBy)
+   ↓
+IntersectionObserver fires when ≥50% visible
+   ↓
+onEnterViewport() → markMessageRead(messageId)
+   ↓
+socket.emit('message:read', { messageId, username })
+   ↓
+Server updates readBy atomically → broadcasts message:read-update
+   ↓
+All clients' handleReadUpdate: append reader to that message's readBy
+   ↓
+Sender's MessageBubble recomputes receipt state → blue ✓✓
+```
+
+### Race handling
+
+**`message:new` vs ack ordering.** Server intentionally emits `message:new` to the sender socket AFTER the broadcast — so on the wire, sender receives `message:new` before the ack callback fires. `handleMessageNew` reconciles first. Ack's `success: true` is a no-op. Race defused by ordering.
+
+**IntersectionObserver double-fire.** `firedRef` in `useReadReceipts` ensures we only call `onEnterViewport` once per mount. Combined with the server's `$ne` dedupe, React StrictMode's double-mount can't create duplicate receipts.
+
+**`markMessageRead` while socket disconnected.** Best-effort: hook checks `socket.connected` before emit. If false, silently drop — when the user scrolls again after reconnect, the observer re-triggers for any still-visible unread messages.
+
+**Reader already in local `readBy`.** `handleReadUpdate` dedupes locally; server's atomic filter dedupes at write time. Same defense-in-depth pattern used throughout the app.
+
+### Receipt state computed at render time
+
+`MessageBubble` computes `receiptState` from `message.status` + `message.readBy` — NOT stored as a separate state field.
+
+```js
+function computeReceiptState(message, currentUsername) {
+  if (message.status === 'pending') return 'pending';
+  const otherReaders = (message.readBy || []).filter(r => r.username !== currentUsername);
+  return otherReaders.length > 0 ? 'read' : 'delivered';
+}
+```
+
+**Why not store `status` on every message?** Delivered / read is fully derivable from `readBy` (and the presence of a real `id`). Storing state that could be derived introduces the risk of drift between state and truth. Only `pending` needs an explicit flag because there's no other signal (the entry has `tempId` but no server id yet).
+
+### `useReadReceipts` — IntersectionObserver pattern
+
+Per-bubble observer with a `firedRef` for single-fire semantics:
+
+- **`threshold: 0.5`** — bubble is "read" when at least half is visible. Peek scrolls don't count; scrolling up to see the top of a long message does.
+- **`callbackRef` pattern** — the `onEnterViewport` prop may be a fresh arrow on each render. Copy it into a ref that's updated in a separate effect, so the observer effect only depends on the boolean `shouldObserve`. Prevents constant observer teardown/rebuild.
+- **`firedRef` + disconnect on fire** — one `message:read` emit per bubble, ever. Cheap to set up N observers (browsers optimise IntersectionObserver aggressively for many targets).
+
+### Trade-offs and future improvements
+
+| Now (F10) | Future |
+|---|---|
+| Any-read = blue tick | All-read = blue (requires online-user count comparison) |
+| Per-bubble IntersectionObserver | Shared root-container observer — marginal perf for very long chats |
+| `readBy` grows unbounded on the Message document | Cap at N most-recent readers, or move to a separate `read_receipts` collection when message counts get large |
+| No "delivered to N, read by M" tooltip | Show breakdown on hover for own messages |
+| Client `firedRef` scoped to one mount | Re-observation on scroll-past-and-back would require reset — fine for our semantics |
+| Send-time optimism uses content-agnostic tempId | Server could hash `(username, content, timestamp)` to detect and reject client-side dupes |
+
+---
+
+## 14. Sections Reserved for Later Features
+
 - **Deployment topology — Render + Vercel + Atlas** *(Feature 11)*
 - **Trade-offs table (final summary)** *(Feature 11)*
 - **Future improvements** *(Feature 11)*
