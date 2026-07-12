@@ -6,6 +6,7 @@ import { env } from './config/env.js';
 import { getDbStatus } from './config/db.js';
 import { notFound } from './middleware/notFound.js';
 import { errorHandler } from './middleware/errorHandler.js';
+import { messageRoutes } from './routes/messages.js';
 
 export function createApp() {
   const app = express();
@@ -26,8 +27,7 @@ export function createApp() {
     });
   });
 
-  // API routes are attached here in Feature 3+
-  // app.use('/api/messages', messageRoutes);
+  app.use('/api/messages', messageRoutes);
 
   app.use(notFound);
   app.use(errorHandler);
