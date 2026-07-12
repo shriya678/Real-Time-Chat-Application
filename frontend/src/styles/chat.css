@@ -42,13 +42,6 @@
   background: #242424;
 }
 
-.chat-input-placeholder {
-  padding: 0.6rem 0.9rem;
-  color: rgba(255, 255, 255, 0.45);
-  font-size: 0.85rem;
-  font-style: italic;
-}
-
 /* --- Message bubbles --- */
 .msg {
   display: flex;

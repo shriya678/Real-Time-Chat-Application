@@ -1,16 +1,15 @@
+import { MessageList } from './MessageList.jsx';
+import { MessageInput } from './MessageInput.jsx';
 import '../styles/chat.css';
 
-export function ChatWindow() {
+export function ChatWindow({ messages, currentUsername, onSend, disabled = false }) {
   return (
     <div className="chat-window">
       <div className="chat-list-area">
-        <div className="chat-empty">
-          <p>No messages yet.</p>
-          <p className="chat-empty-hint">Say hi to break the ice.</p>
-        </div>
+        <MessageList messages={messages} currentUsername={currentUsername} />
       </div>
       <div className="chat-input-area">
-        <div className="chat-input-placeholder">Message input arrives in F6.3.</div>
+        <MessageInput onSend={onSend} disabled={disabled} />
       </div>
     </div>
   );
