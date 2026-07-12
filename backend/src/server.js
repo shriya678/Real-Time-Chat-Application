@@ -1,7 +1,9 @@
+import { createServer } from 'http';
 import { createApp } from './app.js';
 import { connectDB, disconnectDB } from './config/db.js';
 import { env } from './config/env.js';
 import { logger } from './utils/logger.js';
+import { initSockets } from './sockets/index.js';
 
 const SHUTDOWN_TIMEOUT_MS = 10_000;
 
@@ -9,16 +11,21 @@ async function bootstrap() {
   await connectDB();
 
   const app = createApp();
-  const server = app.listen(env.PORT, () => {
+  const httpServer = createServer(app);
+  const io = initSockets(httpServer);
+
+  httpServer.listen(env.PORT, () => {
     logger.info(`server listening on http://localhost:${env.PORT}`);
   });
 
   const shutdown = (signal) => {
     logger.info(`received ${signal}, shutting down`);
-    server.close(async () => {
-      await disconnectDB();
-      logger.info('shutdown complete');
-      process.exit(0);
+    io.close(() => {
+      httpServer.close(async () => {
+        await disconnectDB();
+        logger.info('shutdown complete');
+        process.exit(0);
+      });
     });
 
     setTimeout(() => {
