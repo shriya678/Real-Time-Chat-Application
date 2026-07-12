@@ -1,6 +1,7 @@
 import { Server } from 'socket.io';
 import { env } from '../config/env.js';
 import { logger } from '../utils/logger.js';
+import { registerChatHandlers } from './chatHandler.js';
 
 export function initSockets(httpServer) {
   const io = new Server(httpServer, {
@@ -13,8 +14,7 @@ export function initSockets(httpServer) {
   io.on('connection', (socket) => {
     logger.info('socket connected', { id: socket.id });
 
-    // Domain handlers register here:
-    //   chat handler   → F4.2
+    registerChatHandlers(io, socket);
     //   presence handler → F9
 
     socket.on('disconnect', (reason) => {

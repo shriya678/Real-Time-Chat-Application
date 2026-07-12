@@ -3,6 +3,26 @@ import mongoose from 'mongoose';
 const MAX_USERNAME_LENGTH = 50;
 const MAX_CONTENT_LENGTH = 1000;
 
+// Shared body-shape schema — consumed by both the REST route (validateBody)
+// and the socket chat handler (validate). Colocated with the model because
+// both describe "what a valid message body looks like".
+export const MESSAGE_BODY_SCHEMA = {
+  username: {
+    required: true,
+    type: 'string',
+    trim: true,
+    minLength: 1,
+    maxLength: MAX_USERNAME_LENGTH,
+  },
+  content: {
+    required: true,
+    type: 'string',
+    trim: true,
+    minLength: 1,
+    maxLength: MAX_CONTENT_LENGTH,
+  },
+};
+
 const readReceiptSchema = new mongoose.Schema(
   {
     username: { type: String, required: true, trim: true },
