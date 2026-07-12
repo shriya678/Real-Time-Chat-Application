@@ -64,6 +64,16 @@
   padding: 1.5rem;
 }
 
+.chat-layout {
+  flex: 1;
+  min-height: 0;
+  width: 100%;
+  max-width: 1200px;
+  margin: 0 auto;
+  display: flex;
+  gap: 1rem;
+}
+
 .conn-banner {
   display: flex;
   align-items: center;

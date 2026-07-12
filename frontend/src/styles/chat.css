@@ -1,8 +1,7 @@
 .chat-window {
   height: 100%;
-  width: 100%;
-  max-width: 900px;
-  margin: 0 auto;
+  flex: 1;
+  min-width: 0;
   display: flex;
   flex-direction: column;
   background: #1a1a1a;
@@ -195,5 +194,104 @@
   }
   30% {
     opacity: 1;
+  }
+}
+
+/* --- Online users sidebar --- */
+.online-users {
+  width: 240px;
+  flex-shrink: 0;
+  background: #1a1a1a;
+  border: 1px solid #3a3a3a;
+  border-radius: 12px;
+  padding: 1rem;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+}
+
+.online-users-header {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  padding-bottom: 0.6rem;
+  margin-bottom: 0.4rem;
+  border-bottom: 1px solid #3a3a3a;
+  font-size: 0.8rem;
+  font-weight: 700;
+  color: rgba(255, 255, 255, 0.85);
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+
+.online-users-count {
+  margin-left: auto;
+  background: #3a3a3a;
+  color: rgba(255, 255, 255, 0.85);
+  padding: 0.1rem 0.5rem;
+  border-radius: 10px;
+  font-size: 0.7rem;
+  font-weight: 700;
+}
+
+.online-users-empty {
+  color: rgba(255, 255, 255, 0.4);
+  font-size: 0.85rem;
+  font-style: italic;
+  text-align: center;
+  padding: 1rem 0;
+}
+
+.online-users-list {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+}
+
+.online-user {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.4rem 0.55rem;
+  border-radius: 6px;
+  font-size: 0.9rem;
+  color: rgba(255, 255, 255, 0.9);
+}
+
+.online-user--self {
+  background: rgba(100, 108, 255, 0.14);
+  border: 1px solid rgba(100, 108, 255, 0.35);
+}
+
+.online-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: #4caf50;
+  flex-shrink: 0;
+  box-shadow: 0 0 6px rgba(76, 175, 80, 0.5);
+}
+
+.online-user-name {
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.online-user-tag {
+  font-size: 0.65rem;
+  color: rgba(255, 255, 255, 0.5);
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+
+@media (max-width: 700px) {
+  .online-users {
+    display: none;
   }
 }
