@@ -3,6 +3,7 @@
 A real-time group chat lobby with dummy username auth, typing indicators, online presence, and WhatsApp-style delivered / read receipts. Built as a 24-hour take-home assessment.
 
 > **Live frontend:** [https://real-time-chat-application-wheat-one.vercel.app/](https://real-time-chat-application-wheat-one.vercel.app/)
+
 > **Backend API:** [https://real-time-chat-application-ntu2.onrender.com/health](https://real-time-chat-application-ntu2.onrender.com/health)
 > Render free-tier note: the first request after 15 min of inactivity takes 30–60 s to wake the server (cold start). Subsequent requests are instant.
 
