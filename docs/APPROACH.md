@@ -373,7 +373,118 @@ Single decision point. Adding a new authenticated screen means composing it insi
 
 ---
 
-## 9. Sections Reserved for Later Features
+## 9. Frontend Chat UI *(Feature 6)*
+
+### Component tree
+
+```
+App                                (container — owns auth + mock state)
+├── LoginScreen                    (unauthed branch)
+└── AuthenticatedShell
+    ├── shell-header               (brand + user badge + logout)
+    └── ChatWindow                 (presentational)
+        ├── MessageList
+        │   └── MessageBubble (×N)
+        └── MessageInput
+```
+
+**Design principle: containers own state, presentational components take props.** `App` decides what messages exist and what happens on send. `ChatWindow`, `MessageList`, `MessageBubble`, `MessageInput` do not call `useAuth` and do not fetch — they render what they're given.
+
+Payoffs:
+- Testing is trivial (pass props, assert output)
+- Reuse is cheap (multi-room future — each room mounts its own `ChatWindow` with different props)
+- Data flow is one-directional and obvious
+
+Feature 7 will introduce `ChatContext` (REST + Socket). `App` will then read from `useChat()` instead of holding `useState` directly, but ChatWindow's prop contract stays identical.
+
+### Timestamp formatting
+
+`utils/formatTime.js` uses `Intl.DateTimeFormat` — native, zero deps, locale-aware.
+
+Two branches:
+- **Today:** just the time — `10:23 AM`
+- **Older:** date + time — `Jul 12, 10:23 AM`
+
+Showing `2026-07-12 10:23 AM` for a message that arrived five minutes ago is noise. Every polished chat app (Slack, WhatsApp, iMessage) follows this pattern.
+
+*Alternative rejected:* `date-fns` (~100 KB) or `moment` (~250 KB). Intl covers the two format strings we actually need at zero cost.
+
+### Auto-scroll to newest
+
+Sentinel + `scrollIntoView` pattern:
+
+```jsx
+const bottomRef = useRef(null);
+useEffect(() => {
+  bottomRef.current?.scrollIntoView({ behavior: 'smooth', block: 'end' });
+}, [messages.length]);
+// ...
+<div ref={bottomRef} />
+```
+
+Two deliberate choices:
+
+- **Dependency is `messages.length`, not `messages`.** Prevents re-scroll when only receipt state (`readBy`) changes on existing messages. Critical for F10 when `message:read-update` events start firing frequently — otherwise the viewport would yank on every read event.
+- **Sentinel div at the tail** is more robust than `containerRef.current.scrollTop = scrollHeight` — handles nested scroll containers, smooth animation, and edge cases.
+
+**Known limitation (documented as future improvement):** auto-scrolls unconditionally. If the user has scrolled up to read history, an incoming message yanks them back. Production fix would gate on "user is near the bottom" (checking `scrollHeight - scrollTop ≈ clientHeight`).
+
+### Own vs others styling
+
+Two visual signals, not one:
+
+| | Own | Other |
+|---|---|---|
+| Alignment | Right | Left |
+| Bubble color | Blue (`#4a52d1`) | Grey (`#2f2f2f`) |
+| Sender name | Hidden | Shown |
+
+Two signals so users who don't perceive colors reliably still get instant identity feedback (accessibility). Sender-name-hidden-on-own is the Slack pattern — you know your own messages are yours.
+
+### Message input UX
+
+- `<textarea rows={1}>` (not `<input type="text">`) so multi-line paste is preserved
+- **Enter to send, Shift+Enter for a newline** — the universal chat keybind
+- Send button disabled when trimmed content is empty — no accidental empty submits
+- Client `maxLength={1000}` matches backend `MESSAGE_BODY_SCHEMA.content` — browser physically caps typing
+- Input clears on send — standard UX
+- `disabled` prop on the whole input row — used by F7 when the socket disconnects
+- `resize: none` removes the browser's manual resize handle (looks unpolished in chat UIs)
+- `min-height` + `max-height` in CSS gives a compact starting height that grows a bit before scrolling internally — cheap "grows-as-you-type" feel without JS
+
+### CSS approach
+
+Vanilla CSS, one file per feature area (`auth.css`, `shell.css`, `chat.css`). No CSS-in-JS, no Tailwind, no PostCSS pipeline beyond what Vite ships.
+
+Rationale:
+- Zero setup, zero extra tooling — Vite handles it natively
+- Prefixed class namespaces (`chat-`, `msg-`, `shell-`, `auth-`) are grep-friendly
+- The UI surface is small enough that a design system would be overkill
+
+**Swap candidate if the surface grows:** CSS Modules (Vite has built-in support via `.module.css`). Migration is per-file — components change `className="chat-window"` to `className={styles.chatWindow}`. Contained blast radius.
+
+### Empty state
+
+Rendered by `MessageList` when `messages.length === 0`:
+> No messages yet.
+> Say hi to break the ice.
+
+Small product touch — signals "the app is working, just quiet" instead of leaving the user wondering "is it loading?"
+
+### Trade-offs and future improvements
+
+| Now (F6) | Future |
+|---|---|
+| Local mock state in `App.jsx` | Replaced by `ChatContext` (REST + Socket) in F7 |
+| Auto-scroll on every new message | Sticky-bottom detection — only scroll if user is already near the bottom |
+| Vanilla CSS with prefixed classes | CSS Modules for hard scope isolation if the UI surface grows |
+| Textarea with static min/max height | JS auto-grow (`scrollHeight`-driven) for a smoother feel |
+| No message editing / deletion | `PATCH` / `DELETE /api/messages/:id` with confirm modal + soft-delete |
+| No attachments | Multipart upload + object storage; extend Message with `attachments[]` |
+
+---
+
+## 10. Sections Reserved for Later Features
 
 - **Read receipt update patterns** *(Feature 10)* — the Message schema and pagination live in §6; only the receipt-write flow remains
 - **Reconnection UX** *(Feature 7)*
