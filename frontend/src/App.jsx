@@ -1,13 +1,39 @@
+import { useState } from 'react';
 import { useAuth } from './hooks/useAuth.js';
 import { LoginScreen } from './components/LoginScreen.jsx';
+import { ChatWindow } from './components/ChatWindow.jsx';
 import './styles/shell.css';
+
+// Local mock state for Feature 6. Replaced by ChatContext (REST + Socket) in F7.
+const MOCK_SEED_MESSAGES = [
+  {
+    id: 'mock-1',
+    username: 'system',
+    content:
+      'This is a local mock message so both bubble styles are visible. Real live messaging arrives in Feature 7.',
+    createdAt: new Date(Date.now() - 60_000).toISOString(),
+  },
+];
 
 function App() {
   const { user, logout, isAuthenticated } = useAuth();
+  const [messages, setMessages] = useState(MOCK_SEED_MESSAGES);
 
   if (!isAuthenticated) {
     return <LoginScreen />;
   }
+
+  const handleSend = (content) => {
+    setMessages((prev) => [
+      ...prev,
+      {
+        id: `local-${Date.now()}`,
+        username: user,
+        content,
+        createdAt: new Date().toISOString(),
+      },
+    ]);
+  };
 
   return (
     <div className="app-shell">
@@ -23,10 +49,11 @@ function App() {
         </div>
       </header>
       <main className="shell-body">
-        <div className="shell-placeholder">
-          <h2>Lobby</h2>
-          <p>Chat UI arrives in Feature 6. For now, this is the authenticated shell.</p>
-        </div>
+        <ChatWindow
+          messages={messages}
+          currentUsername={user}
+          onSend={handleSend}
+        />
       </main>
     </div>
   );
