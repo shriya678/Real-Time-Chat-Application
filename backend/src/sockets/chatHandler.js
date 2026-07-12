@@ -7,6 +7,8 @@ export const CHAT_EVENTS = {
   SEND: 'message:send',
   NEW: 'message:new',
   ERROR: 'message:error',
+  TYPING_START: 'typing:start',
+  TYPING_STOP: 'typing:stop',
 };
 
 function respondError(socket, ack, code, message, details) {
@@ -34,6 +36,29 @@ export function registerChatHandlers(io, socket) {
         socketId: socket.id,
       });
       respondError(socket, ack, 'INTERNAL_ERROR', 'Failed to persist message');
+    }
+  });
+
+  socket.on(CHAT_EVENTS.TYPING_START, (payload) => {
+    const username = String(payload?.username || '').trim();
+    if (!username) return;
+    socket.data.typingAs = username;
+    socket.broadcast.emit(CHAT_EVENTS.TYPING_START, { username });
+  });
+
+  socket.on(CHAT_EVENTS.TYPING_STOP, (payload) => {
+    const username = String(payload?.username || '').trim();
+    if (!username) return;
+    delete socket.data.typingAs;
+    socket.broadcast.emit(CHAT_EVENTS.TYPING_STOP, { username });
+  });
+
+  socket.on('disconnect', () => {
+    if (socket.data.typingAs) {
+      socket.broadcast.emit(CHAT_EVENTS.TYPING_STOP, {
+        username: socket.data.typingAs,
+      });
+      delete socket.data.typingAs;
     }
   });
 }
