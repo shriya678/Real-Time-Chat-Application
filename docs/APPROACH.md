@@ -484,10 +484,141 @@ Small product touch — signals "the app is working, just quiet" instead of leav
 
 ---
 
-## 10. Sections Reserved for Later Features
+## 10. REST + Socket Client Integration *(Feature 7)*
+
+### Overall architecture
+
+Two transports fused behind one Context:
+
+```
+                    ┌──────────────────────┐
+                    │     <App />          │
+                    │  useAuth().user      │
+                    └──────────┬───────────┘
+                               │ if authenticated
+                    ┌──────────▼───────────┐
+                    │  <ChatProvider>      │
+                    │  username={user}     │
+                    └──────────┬───────────┘
+                               │
+        ┌──────────────────────┼──────────────────────┐
+        │                      │                      │
+   REST (axios)          Socket (singleton)     React state
+   • fetchMessages()     • connect/disconnect   • messages[]
+     on mount            • message:new          • isConnected
+     → history[]         • message:send         • isLoadingHistory
+                                                • historyError
+                               │
+                    ┌──────────▼───────────┐
+                    │  useChat() consumer  │
+                    │  <ChatWindow />      │
+                    │  <ConnectionBanner/> │
+                    └──────────────────────┘
+```
+
+REST provides the **initial state**; the socket provides the **stream of updates**. Both write into the same `messages` array — deduped by `id` so the join is lossless.
+
+### REST client — `api/client.js`
+
+Axios instance configured with:
+- `baseURL` from `VITE_API_URL`
+- `timeout: 10s` — hung requests fail fast instead of leaving the UI spinning
+- Response interceptor that:
+  - **Unwraps** `{ success: true, data }` → returns just `data` so consumers write `const history = await fetchMessages()`, not `.data.data`
+  - **Normalises** `{ success: false, error: { code, message, details } }` into a real `Error` with those fields attached
+
+The whole rest of the app catches `try { ... } catch (err) { err.code, err.message, err.details }` without ever unpacking Axios internals.
+
+*Alternative rejected:* `fetch`. Would require re-implementing timeout, interceptors, and JSON handling. Axios earns its 30 KB.
+
+### Socket singleton — `socket/index.js`
+
+One `socket.io-client` instance for the whole app, created lazily on the first `getSocket()`. Config:
+- `transports: ['websocket']` — skip long-polling
+- `autoConnect: true` — connect on creation
+- Reconnection: `Infinity` attempts, 1 s initial delay, up to 5 s with backoff
+
+Rationale: multiple sockets per tab would waste connections and confuse server-side presence tracking (F9). A module-level singleton in ES modules is naturally shared — no Context needed for this concern.
+
+### `ChatContext` — the state layer
+
+Provider maintains `{ messages, sendMessage, isConnected, isLoadingHistory, historyError }`.
+
+**Two independent effects, one per concern:**
+
+```
+useEffect (once)
+  ↓
+fetchMessages()          ──→ setMessages (merged with any live already received)
+                             setIsLoadingHistory(false)
+
+useEffect (once)
+  ↓
+socket.on('connect')     ──→ setIsConnected(true)
+socket.on('disconnect')  ──→ setIsConnected(false)
+socket.on('message:new') ──→ setMessages (dedupe by id, append)
+```
+
+Split effects keep each side effect small and independently reasoned about — a REST failure doesn't affect socket lifecycle handling.
+
+### Race handling — history vs live merge
+
+The single non-obvious correctness detail. If a `message:new` arrives BEFORE the REST history fetch resolves, we don't want to overwrite the live message when history lands. The merge:
+
+```js
+setMessages((prev) => {
+  const historyIds = new Set(history.map((m) => m.id));
+  const liveOnly = prev.filter((m) => !historyIds.has(m.id));
+  return [...history, ...liveOnly];
+});
+```
+
+Preserves both. Dedupes by `id`. Chronological order maintained (history is oldest→newest per API contract; live messages naturally appended in arrival order).
+
+Fetch cancellation via a `cancelled` flag in the effect cleanup prevents `setState` on an unmounted provider (e.g. logout mid-load).
+
+### Send path — socket, not REST
+
+The frontend sends over the socket, not `POST /api/messages`. Reasons:
+
+- **Lower latency.** Socket message stays on the open TCP connection — no HTTP handshake, no auth negotiation.
+- **Consistent event model.** Sender receives its own message via the same `message:new` broadcast every other client gets. Single code path renders it.
+- **Broadcast atomicity.** Server persists + broadcasts in one handler; REST would require the controller to also `io.emit`, dragging the `io` dependency into the HTTP layer.
+
+The REST `POST /api/messages` endpoint still exists on the backend — the assessment requires it, and it serves as a fallback (e.g. a future "resend failed message" flow when the socket is down). It just isn't the primary path from this UI.
+
+### Reconnection UX
+
+`ConnectionBanner` renders a subtle red pulse-dot bar when `!isConnected`. Auto-hides on reconnect.
+
+Simultaneously, `MessageInput` receives `disabled={!isConnected}` and greys itself out — the user physically cannot send while offline.
+
+The socket handles reconnection itself (Socket.io's `reconnection` config); we surface its state, we don't drive it. The moment Socket.io re-emits `'connect'`, the banner vanishes and input re-enables — no user action required.
+
+*Alternatives rejected:* modal on disconnect (too aggressive for a transient blip); toast that disappears (leaves the user unaware if the disconnect persists).
+
+### Socket persistence across logout
+
+The socket singleton persists across `AuthContext` state changes. On logout, `ChatProvider` unmounts and removes its listeners; the socket stays open. On re-login (with any username), a fresh `ChatProvider` mounts and re-subscribes. History is refetched on each mount.
+
+Feature 9 will introduce explicit `disconnectSocket()` on logout so the server sees a proper "user left" presence event. Not needed for F7 since presence isn't in scope yet.
+
+### Trade-offs and future improvements
+
+| Now (F7) | Future |
+|---|---|
+| Load newest 50; no pagination UI | Infinite-scroll upward via `?before=<cursor>`; both the service and the Context already support it |
+| No optimistic send | Feature 10 introduces optimistic push + tempId + `message:ack` reconciliation for the delivered-tick UX |
+| Retry-via-refresh on history load failure | Explicit "Retry" button that calls a `retryHistory()` action exposed from ChatContext |
+| Socket stays connected on logout | Feature 9 disconnects the socket on logout so the server's presence roster stays accurate |
+| No offline queue | Buffer messages while `!isConnected` and flush on reconnect (with tempId ids) |
+| No client-side message deduplication on tempIds | Feature 10's tempId + ack correlation handles this natively |
+
+---
+
+## 11. Sections Reserved for Later Features
 
 - **Read receipt update patterns** *(Feature 10)* — the Message schema and pagination live in §6; only the receipt-write flow remains
-- **Reconnection UX** *(Feature 7)*
 - **Deployment topology — Render + Vercel + Atlas** *(Feature 11)*
 - **Trade-offs table (final summary)** *(Feature 11)*
 - **Future improvements** *(Feature 11)*
