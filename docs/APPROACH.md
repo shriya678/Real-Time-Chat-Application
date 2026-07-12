@@ -105,11 +105,94 @@ Real-Time-Chat-Application/
 
 ---
 
-## 6. Sections Reserved for Later Features
+## 6. Messages API Design *(Feature 3)*
+
+### Endpoints
+
+| Method | Path | Purpose | Success | Failure |
+|---|---|---|---|---|
+| `POST` | `/api/messages` | Create a message | `201` + `{success, data: <message>}` | `400 VALIDATION_ERROR` with per-field `details[]` |
+| `GET` | `/api/messages` | Paginated history (chronological) | `200` + `{success, data: {messages, hasMore, nextCursor}}` | `400 INVALID_CURSOR` on malformed `?before` |
+
+Query params on `GET`: `limit?` (1..100, default 50), `before?` (ISO 8601 cursor).
+
+### Layered request flow
+
+For a `POST /api/messages`:
+
+```
+Request
+   ↓
+app-level middleware   →  helmet, cors, express.json, morgan
+   ↓
+route-level middleware →  validateBody(MESSAGE_BODY_SCHEMA)
+   ↓
+controller             →  messageController.create   (thin, no logic)
+   ↓
+service                →  messageService.createMessage
+   ↓
+model                  →  Message.create
+   ↓
+MongoDB
+   ↓
+Response  ←  { success: true, data: <message.toJSON()> }
+```
+
+Each layer has one responsibility. Any future change — rate limiting, profanity filtering, per-user quotas — has one obvious home.
+
+### Response envelope
+
+Consistent shape across every endpoint, success or failure:
+
+```json
+{ "success": true,  "data": ... }
+{ "success": false, "error": { "code": "...", "message": "...", "details": [...] } }
+```
+
+Frontend can branch on `success` without endpoint-specific parsing. `details` is included only when field-level info exists (validation errors).
+
+### Pagination — cursor over offset
+
+Chose cursor pagination (`?before=<ISO date>`) over offset (`?page=N&limit=50`).
+
+- **Stable during concurrent writes.** The cursor is anchored to a specific message; new messages arriving mid-scroll don't shift what previous requests would return. Offset would cause duplicates or gaps.
+- **O(log N) at any depth** thanks to the `{createdAt: -1}` index. Offset requires the DB to scan and discard `N` documents.
+- **Natural fit for infinite-scroll UIs.** The browser only needs to remember the oldest visible cursor.
+
+The DB query orders newest-first (fastest with our index) then the service `.reverse()`s in memory so the response array reads chronologically (oldest → newest). Frontend appends new incoming messages to the tail with no special handling.
+
+**Trade-offs acknowledged:**
+- No random-page access — irrelevant for a chat feed
+- Single-field timestamp cursor could theoretically collide on same-millisecond writes. A production version would use a composite `(createdAt, _id)` cursor as a tie-breaker — flagged as a future improvement.
+
+The `limit + 1` trick reports `hasMore` without a separate `countDocuments()` call — one round-trip to Mongo instead of two.
+
+### Validation — hand-rolled, not zod/joi
+
+Rolled a minimal `validateBody(schema)` middleware factory instead of adopting zod, joi, or express-validator.
+
+- Our surface is 2 endpoints × 2 fields — a library's abstractions are wasted
+- Zero extra deps stays consistent with the "minimal in-house logger" precedent
+- Returns **all** field errors at once (not fail-fast) — the client sees every problem in one round-trip
+
+**Defense in depth.** The middleware is the first line at the HTTP boundary. The Mongoose schema (`required`, `minLength`, `maxLength`, `trim`) is the second at the DB boundary. Either can fail closed and the other still catches it.
+
+**Swap candidate:** if the schema surface grows (many endpoints, nested shapes, conditional rules), migrate `validate.js` to **zod**. The middleware boundary means only that one file changes — controllers and routes see the same `req.body` contract.
+
+### Message model — persistence design
+
+- **Embedded `readBy` subdoc** (not a separate collection) — receipts are small, only accessed with the parent, and don't need their own lifecycle. Single-query reads.
+- **`deliveredAt` defaults to `Date.now()` at create** — in this architecture, persistence and broadcast are effectively atomic, so `deliveredAt ≈ createdAt`. A queue-based fanout system would move this to the socket layer post-broadcast.
+- **`toJSON` transforms `_id → id` and drops `__v`** — the REST response is clean and Mongoose-implementation-agnostic.
+- **Index on `{ createdAt: -1 }`** — required for the cursor pagination query to be efficient.
+
+---
+
+## 7. Sections Reserved for Later Features
 
 - **State management strategy** *(Feature 5–7)*
 - **Socket.io architecture — event catalog, room usage, connection lifecycle** *(Feature 4, 7–10)*
-- **Persistence patterns — pagination, indexing, read receipt updates** *(Feature 3, 10)*
+- **Read receipt update patterns** *(Feature 10)* — the Message schema and pagination live in §6; only the receipt-write flow remains
 - **Reconnection UX** *(Feature 7)*
 - **Deployment topology — Render + Vercel + Atlas** *(Feature 11)*
 - **Trade-offs table (final summary)** *(Feature 11)*

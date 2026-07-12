@@ -13,9 +13,14 @@ export function errorHandler(err, req, res, next) {
     stack: env.IS_PRODUCTION ? undefined : err.stack,
   });
 
+  const payload = { code, message };
+  if (Array.isArray(err.details) && err.details.length) {
+    payload.details = err.details;
+  }
+
   res.status(status).json({
     success: false,
-    error: { code, message },
+    error: payload,
   });
 }
 
