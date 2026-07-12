@@ -26,6 +26,31 @@ export async function createMessage({ username, content }) {
   return message.toJSON();
 }
 
+/**
+ * Mark a message as read by `username`. Atomic — the `$ne` filter prevents
+ * duplicate receipts if the same user's IntersectionObserver fires twice.
+ * Returns the receipt payload on success, or `null` if the user has already
+ * read this message (no-op — no broadcast should follow).
+ */
+export async function markMessageRead({ messageId, username }) {
+  const trimmed = String(username || '').trim();
+  if (!trimmed || !messageId) return null;
+
+  const readAt = new Date();
+  const result = await Message.updateOne(
+    {
+      _id: messageId,
+      'readBy.username': { $ne: trimmed },
+    },
+    {
+      $push: { readBy: { username: trimmed, readAt } },
+    },
+  );
+
+  if (result.modifiedCount === 0) return null;
+  return { messageId, username: trimmed, readAt };
+}
+
 export async function listMessages({ limit, before } = {}) {
   const effectiveLimit = clampLimit(limit);
   const beforeDate = parseCursor(before);
