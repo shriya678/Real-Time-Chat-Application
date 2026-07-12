@@ -63,3 +63,50 @@
   flex-direction: column;
   padding: 1.5rem;
 }
+
+.conn-banner {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.5rem 1.5rem;
+  background: rgba(229, 72, 77, 0.15);
+  border-bottom: 1px solid rgba(229, 72, 77, 0.35);
+  color: #ff9aa0;
+  font-size: 0.85rem;
+}
+
+.conn-banner-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: #ff9aa0;
+  animation: conn-banner-pulse 1.2s ease-in-out infinite;
+}
+
+@keyframes conn-banner-pulse {
+  0%,
+  100% {
+    opacity: 0.4;
+  }
+  50% {
+    opacity: 1;
+  }
+}
+
+.shell-error {
+  padding: 0.75rem 1rem;
+  margin: auto;
+  max-width: 32rem;
+  background: rgba(229, 72, 77, 0.1);
+  border: 1px solid rgba(229, 72, 77, 0.35);
+  border-radius: 6px;
+  color: #ff9aa0;
+  font-size: 0.9rem;
+  text-align: center;
+}
+
+.shell-loading {
+  margin: auto;
+  color: rgba(255, 255, 255, 0.5);
+  font-size: 0.95rem;
+}
