@@ -1,0 +1,74 @@
+.app-shell {
+  display: flex;
+  flex-direction: column;
+  min-height: 100vh;
+}
+
+.shell-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 0.9rem 1.5rem;
+  border-bottom: 1px solid #3a3a3a;
+  background: #242424;
+}
+
+.shell-brand {
+  font-size: 1.1rem;
+  font-weight: 700;
+  color: rgba(255, 255, 255, 0.95);
+}
+
+.shell-user {
+  display: flex;
+  align-items: center;
+  gap: 1rem;
+}
+
+.shell-username {
+  color: rgba(255, 255, 255, 0.75);
+  font-size: 0.9rem;
+}
+
+.shell-username strong {
+  color: rgba(255, 255, 255, 0.95);
+  font-weight: 600;
+}
+
+.shell-logout {
+  padding: 0.5rem 0.9rem;
+  border: 1px solid #3a3a3a;
+  border-radius: 6px;
+  background: transparent;
+  color: rgba(255, 255, 255, 0.85);
+  font-size: 0.85rem;
+  cursor: pointer;
+  transition:
+    background-color 0.15s ease,
+    border-color 0.15s ease,
+    color 0.15s ease;
+}
+
+.shell-logout:hover {
+  background: rgba(229, 72, 77, 0.1);
+  border-color: rgba(229, 72, 77, 0.4);
+  color: #ff9aa0;
+}
+
+.shell-body {
+  flex: 1;
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  padding: 2rem;
+}
+
+.shell-placeholder {
+  text-align: center;
+  color: rgba(255, 255, 255, 0.7);
+}
+
+.shell-placeholder h2 {
+  margin: 0 0 0.5rem;
+  color: rgba(255, 255, 255, 0.95);
+}
