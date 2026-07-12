@@ -1,5 +1,6 @@
 import { useAuth } from './hooks/useAuth.js';
 import { useChat } from './hooks/useChat.js';
+import { useTyping } from './hooks/useTyping.js';
 import { LoginScreen } from './components/LoginScreen.jsx';
 import { ChatWindow } from './components/ChatWindow.jsx';
 import { ChatProvider } from './context/ChatContext.jsx';
@@ -9,6 +10,7 @@ import './styles/shell.css';
 function AuthenticatedApp({ user, onLogout }) {
   const { messages, sendMessage, isConnected, isLoadingHistory, historyError } =
     useChat();
+  const { typers, handleTyping, handleStopTyping } = useTyping({ username: user });
 
   return (
     <div className="app-shell">
@@ -41,6 +43,9 @@ function AuthenticatedApp({ user, onLogout }) {
             currentUsername={user}
             onSend={sendMessage}
             disabled={!isConnected}
+            typers={typers}
+            onType={handleTyping}
+            onStopTyping={handleStopTyping}
           />
         )}
       </main>
