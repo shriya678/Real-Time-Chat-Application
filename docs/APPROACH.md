@@ -292,9 +292,89 @@ A 10-second `setTimeout(...).unref()` force-exits if any step hangs. The `.unref
 
 ---
 
-## 8. Sections Reserved for Later Features
+## 8. State Management Strategy *(Feature 5)*
 
-- **State management strategy** *(Feature 5–7)*
+### Overall approach
+
+React Context + custom hooks. No Redux, no Zustand, no Jotai. The app's state graph is small (auth in F5, chat in F7, presence in F9, typing in F8) and every piece is naturally scoped to one Provider. A state library here would be net-negative — more surface area, more boilerplate, less obvious flow.
+
+**Convention applied to every context in this app:**
+- One Context per domain (`AuthContext`, `ChatContext`, `PresenceContext`)
+- Provider owns the state and every side effect
+- A companion custom hook (`useAuth`, `useChat`, `usePresence`) is the **only** way consumers touch the context — it wraps `useContext` and throws if the provider is missing
+
+### AuthContext — the anchor
+
+Shape: `{ user, login, logout, isAuthenticated }`. Placed at the root (`main.jsx`) so any component in the tree can call `useAuth()`.
+
+**Persistence via `localStorage`.** Username survives refresh without any auth handshake. Read once at mount via `useState(readStoredUser)` initialiser — synchronous, no flash of unauthed content. All storage access wrapped in `try/catch` so Safari private mode / corporate policy failures degrade gracefully to in-memory-only.
+
+**Namespaced key `chatapp:user`.** Prevents collision with any other app on the same origin.
+
+**Client-side validation mirrors backend rules** (trim, non-empty, ≤50 chars). Defense in depth — the server still validates every socket/REST payload authoritatively.
+
+### Optimisation pattern — memoise the context value
+
+Every provider in this app follows the same shape:
+
+```jsx
+const login = useCallback(...);
+const logout = useCallback(...);
+
+const value = useMemo(
+  () => ({ user, login, logout, isAuthenticated: user !== null }),
+  [user, login, logout],
+);
+
+return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;
+```
+
+Without `useMemo`, `value` is a fresh object every render, and every consumer re-renders whether or not the underlying data changed. This is the most common Context perf trap; the pattern is applied consistently everywhere we ship a provider.
+
+### Custom hooks as the public API
+
+Consumers **never** import `AuthContext` directly — they import `useAuth`. Three benefits:
+
+- **Fail-loud on missing provider.** `useAuth` throws with a clear message if called outside `<AuthProvider>`. Silent `undefined` errors deep in a subtree are prevented at the source.
+- **Refactor freedom.** If we ever swap Context for a store, only the hook body changes. Consumers stay identical.
+- **Discoverable.** `useAuth` in a component immediately signals "this component depends on auth state" — grep-friendly and reviewer-friendly.
+
+### Pattern reuse across later features
+
+The same shape lands three more times:
+
+| Feature | Context | Hook | State it exposes |
+|---|---|---|---|
+| F7 | `ChatContext` | `useChat` | `messages`, `sendMessage`, `hasMore`, `loadOlder`, connection status |
+| F8 | *(local to input)* | `useTyping` | Debounced typing signal — no provider needed |
+| F9 | `PresenceContext` | `usePresence` | `onlineUsers` roster |
+
+Each provider uses the same `useCallback` + `useMemo` discipline. Each hook uses the same throw-if-missing-provider pattern.
+
+### Alternatives rejected
+
+| Alternative | Why not |
+|---|---|
+| **Redux Toolkit** | Excellent library, wrong scale. Our state is 3 slices, no complex derived selectors, no time-travel-debugging need, no cross-cutting middleware. Setup cost is real; benefits don't materialise. |
+| **Zustand** | Great when Context perf becomes an issue at large scale — not here. Also skipped for consistency ("one state approach, applied everywhere"). |
+| **A single "AppContext"** | Would couple auth, chat, and presence changes into one re-render blast radius. Small contexts keep updates localised. |
+| **Prop drilling** | Would work today (small tree) but breaks the moment we need `useAuth` inside a nested `MessageInput`. Setting up the Context pattern early avoids the migration. |
+
+### Auth gate placement
+
+The auth check lives in `App.jsx`, not in individual screens:
+
+```jsx
+if (!isAuthenticated) return <LoginScreen />;
+return <AuthenticatedShell />;
+```
+
+Single decision point. Adding a new authenticated screen means composing it inside the shell, not remembering to sprinkle auth guards. Per-component `useAuth` guards are a maintenance trap; centralising the gate keeps the responsibility in one obvious place.
+
+---
+
+## 9. Sections Reserved for Later Features
+
 - **Read receipt update patterns** *(Feature 10)* — the Message schema and pagination live in §6; only the receipt-write flow remains
 - **Reconnection UX** *(Feature 7)*
 - **Deployment topology — Render + Vercel + Atlas** *(Feature 11)*
