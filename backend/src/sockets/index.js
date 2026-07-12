@@ -2,6 +2,7 @@ import { Server } from 'socket.io';
 import { env } from '../config/env.js';
 import { logger } from '../utils/logger.js';
 import { registerChatHandlers } from './chatHandler.js';
+import { registerPresenceHandlers } from './presenceHandler.js';
 
 export function initSockets(httpServer) {
   const io = new Server(httpServer, {
@@ -15,7 +16,7 @@ export function initSockets(httpServer) {
     logger.info('socket connected', { id: socket.id });
 
     registerChatHandlers(io, socket);
-    //   presence handler → F9
+    registerPresenceHandlers(io, socket);
 
     socket.on('disconnect', (reason) => {
       logger.info('socket disconnected', { id: socket.id, reason });
